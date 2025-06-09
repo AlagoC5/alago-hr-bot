@@ -1,43 +1,56 @@
+from statcast_fetcher import fetch_stats
 from scraper_dk import scrape_dk
 from scraper_fd import scrape_fd
-from statcast_fetcher import fetch_statcast_data
-from model_engine import run_prediction_model
-from sheet_output import update_google_sheet
-from discord_poster import post_to_discord
+from sheet_output import post_to_google_sheet
 
-from datetime import datetime, timedelta
+def main():
+    print("🔄 Starting MLB Home Run AI model...")
 
-def run_model():
+    # 1. Get Statcast stats
+    stats = fetch_stats()
+
+    # 2. Get odds data
     print("🟢 Scraping DraftKings...")
     dk_data = scrape_dk()
 
-    print("🟦 Scraping FanDuel...")
+    print("🔵 Scraping FanDuel...")
     fd_data = scrape_fd()
 
+    # 3. Combine props from both books
     all_props = dk_data + fd_data
-    print(f"📦 Scraped {len(all_props)} total props:")
+    print(f"📦 Total props scraped: {len(all_props)}")
 
+    # 4. Calculate EV and rating
+    enriched_props = []
     for prop in all_props:
-        print(f" - {prop['player_name']} @ {prop['odds']}")
+        name = prop["player"]
+        if name not in stats:
+            continue
 
-    print("📊 Fetching Statcast stats...")
-    end_date = datetime.now().date()
-    start_date = end_date - timedelta(days=30)
-    print(f"📊 Loading Statcast data from {start_date} to {end_date}...")
+        barrel = stats[name]["barrel%"]
+        hr_pa = stats[name]["HR/PA"]
+        odds = prop["odds_decimal"]
+        implied_prob = 1 / odds
 
-    statcast_stats = fetch_statcast_data(start_date, end_date)
-    print(f"✅ Loaded stats for {len(statcast_stats)} players.")
+        ai_prob = hr_pa * (1 + barrel / 100)
+        ev = round(ai_prob * odds - 1, 3)
+        ai_rating = round(ai_prob * 100, 1)
 
-    print("🧠 Running prediction model...")
-    final_predictions = run_prediction_model(all_props, statcast_stats)
+        prop["barrel%"] = barrel
+        prop["HR/PA"] = round(hr_pa, 3)
+        prop["implied_prob"] = round(implied_prob, 3)
+        prop["ai_prob"] = round(ai_prob, 3)
+        prop["EV"] = ev
+        prop["AI Rating"] = ai_rating
 
-    print(f"🎯 Final Predictions: {len(final_predictions)} players selected")
+        enriched_props.append(prop)
 
-    print("📤 Updating Google Sheet...")
-    update_google_sheet(final_predictions)
+    print(f"✅ Enriched props: {len(enriched_props)}")
 
-    print("📬 Posting to Discord...")
-    post_to_discord(final_predictions)
+    # 5. Filter for +EV and sort
+    enriched_props.sort(key=lambda x: x["EV"], reverse=True)
+    top_props = [p for p in enriched_props if p["EV"] > 0][:10]
 
-if __name__ == "__main__":
-    run_model()
+    # 6. Send to Google Sheet
+    post_to_google_sheet(top_props)
+    print("📤 Posted to Google Sheet ✅")
