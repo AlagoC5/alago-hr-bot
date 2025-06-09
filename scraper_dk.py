@@ -1,37 +1,38 @@
-import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-import time
+import requests
+import re
 
 def scrape_dk():
-    options = uc.ChromeOptions()
-    options.add_argument("--headless")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
+    url = "https://sportsbook.draftkings.com/leagues/baseball/mlb"
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
 
-    driver = uc.Chrome(options=options)
-    driver.get("https://sportsbook.draftkings.com/leagues/baseball/mlb?category=home-runs")
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        print("❌ DraftKings request failed.")
+        return []
 
-    time.sleep(10)  # wait for page to load
+    html = response.text
+    pattern = re.compile(r'"label":"(.*?)","outcomes":\[(.*?)\]')
+    players = []
 
-    props = []
-    try:
-        rows = driver.find_elements(By.CSS_SELECTOR, 'div.event-cell__name-text')
-        odds = driver.find_elements(By.CSS_SELECTOR, 'span.outcome-cell__line')
-
-        for i in range(min(len(rows), len(odds))):
-            name = rows[i].text.strip()
-            odd_text = odds[i].text.strip().replace("+", "")
-            if name and odd_text.isnumeric():
-                props.append({
+    for match in re.finditer(pattern, html):
+        label = match.group(1)
+        if "To Hit a Home Run" not in label:
+            continue
+        try:
+            name = label.replace("To Hit a Home Run - ", "").strip()
+            odds_data = match.group(2)
+            odds_match = re.search(r'"odds":(-?\d+)', odds_data)
+            if odds_match:
+                odds = int(odds_match.group(1))
+                players.append({
                     "player": name,
-                    "odds": int(odd_text),
-                    "team": "N/A",
-                    "opponent": "N/A"
+                    "book": "DraftKings",
+                    "odds": odds
                 })
+        except Exception as e:
+            continue
 
-    except Exception as e:
-        print(f"❌ DK scrape error: {e}")
-
-    driver.quit()
-    return props
+    print(f"✅ DraftKings scraped {len(players)} props.")
+    return players
